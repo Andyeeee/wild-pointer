@@ -1,87 +1,205 @@
 # 🚀 Wild Pointer (野指针)
 
-> "Traveling through hyperspace ain't like dusting crops, boy." — Han Solo
+---
 
-![Java](https://img.shields.io/badge/Java-Spring%20Boot-green) ![Vue](https://img.shields.io/badge/Vue.js-2.x-42b883) ![License](https://img.shields.io/badge/License-MIT-blue)
+> “Traveling through hyperspace ain’t like dusting crops, boy.” — Han Solo
+> 
 
 **Wild Pointer** 是一个为探索者设计的随机导航工具。
 
-作为《世界迷雾 (Fog of World)》的玩家或电车车主，你是否厌倦了每天重复的通勤路线？该项目旨在通过生成指定半径内的**随机坐标**，利用算法帮你打破“回音室效应”，探索城市中从未踏足的角落。
+作为《世界迷雾 (Fog of World)》的玩家或电车车主，你是否厌倦了每天重复的通勤路线？该项目通过在指定半径内生成**随机坐标**，帮助你打破“回音室效应”，探索城市中从未踏足的角落。
 
 **Wild Pointer** is a random navigation tool designed for explorers. It generates random coordinates within a specified radius to help you break out of your routine and explore the unknown parts of your city.
 
-## ✨ Features (功能特性)
+---
 
-- 🎯 **Hyperdrive Jump**: 设定最小/最大探索半径（例如 10km - 50km），一键生成随机目的地。
-- 🗺️ **Auto Navigation**: 自动唤起高德地图/百度地图 App，并进入**路径规划**模式。
-- 📱 **Mobile First**: 专为手机浏览器适配，支持 iOS/Android 通用链接 (Universal Link)。
-- 🔒 **Privacy Focused**: 纯数学计算，无后台追踪，只记录你的探索精神。
+## ✨ Features / 功能特性
 
-## 🛠️ Tech Stack (技术栈)
+- 🎯 **Hyperdrive Jump**
+    
+    设定最小/最大探索半径（例如 10km–50km），一键生成随机目的地。
+    
+- 🗺️ **Auto Navigation**
+    
+    自动唤起高德地图 / 百度地图 App，并进入**路径规划**模式。
+    
+- 📱 **Mobile First**
+    
+    专为手机浏览器适配，支持 iOS / Android 通用链接 (Universal Link)。
+    
+- 🔒 **Privacy Focused**
+    
+    纯数学计算，无后台追踪，不采集位置信息。
+    
+
+---
+
+## 🛠 Tech Stack / 技术栈
 
 - **Backend**: Java (Spring Boot 2.7)
-  - 核心逻辑：极坐标转换算法、RESTful API
+    - 核心逻辑：极坐标转换算法、RESTful API
 - **Frontend**: Vue.js 2
-  - 交互：Geolocation API、AmAP URI Scheme
+    - 交互：Geolocation API、AMap URI Scheme
 - **Deployment**: Nginx + Ubuntu Server (Self-signed SSL)
 
-## 🚀 Quick Start (快速开始)
+---
 
-### Prerequisites (前置要求)
+## 🚀 Quick Start / 快速开始
+
+### 1. Prerequisites / 前置要求
+
 - JDK 1.8+
 - Node.js & npm
 - Maven
+- 已安装并配置好 Git（可选）
 
-### 1. Backend (后端)
+---
+
+### 2. Backend / 后端
+
+### 2.1 获取代码
+
+```bash
+git clone <your-repo-url>
+cd wild-pointer
+```
+
+### 2.2 启动 Spring Boot 服务
+
+```bash
+# 在项目根目录下
+mvn spring-boot:run
+```
+
+服务默认会启动在：
+
+- 本地地址：[http://localhost:8080](http://localhost:8080)
+
+如需修改端口或其他配置，请在 `application.yml` / [`application.properties`](http://application.properties) 中调整。
+
+---
+
+### 3. Frontend / 前端
+
+### 3.1 进入前端项目
+
+```bash
+cd wild-pointer-web
+```
+
+### 3.2 安装依赖
+
+```bash
+npm install
+```
+
+### 3.3 开发环境运行
+
+```bash
+npm run serve
+```
+
+启动成功后，浏览器访问：
+
+- 开发环境：[http://localhost:8080](http://localhost:8080)
+    
+    > 注意：请根据实际后端服务地址修改前端中的 API Base URL。
+    > 
+
+---
+
+## 📦 Deployment / 服务器部署
+
+本项目支持部署在 Linux 服务器（例如 Ubuntu / CentOS）上。
+
+### 1. 后端打包
 
 ```bash
 cd wild-pointer
-# 运行 Spring Boot 服务
-mvn spring-boot:run
-# 服务将启动在 http://localhost:8080
-2. Frontend (前端)
-Bash
+mvn clean package
+```
 
+生成的可执行包（示例）：
+
+- `target/wild-pointer.jar`
+
+运行：
+
+```bash
+java -jar target/wild-pointer.jar
+```
+
+---
+
+### 2. 前端构建
+
+```bash
 cd wild-pointer-web
-# 安装依赖
 npm install
-# 开发模式运行
-npm run serve
-# 访问 http://localhost:8080 (注意修改 API 地址)
-📦 Deployment (服务器部署)
-本项目支持部署在 Linux 服务器 (Ubuntu/CentOS) 上。
+npm run build
+```
 
-Build:
+构建输出目录：
 
-后端: mvn clean package -> wild-pointer.jar
+- `dist/`
 
-前端: npm run build -> dist/
+---
 
-Nginx Config: 由于现代浏览器要求 Geolocation API 必须在 HTTPS 环境下运行，建议配置 Nginx 反向代理并启用 SSL (自签名证书即可)。
+### 3. Nginx 配置（HTTPS + 反向代理）
 
-Nginx
+由于现代浏览器要求 Geolocation API 必须在 **HTTPS** 环境下运行，建议配置 Nginx 反向代理并启用 SSL（自签名证书即可用于自用工具）。
 
+下面是一个简化示例配置（请根据你的域名和证书路径调整）：
+
+```
 server {
     listen 443 ssl;
-    # SSL 配置...
+    server_name [your-domain.com](http://your-domain.com);
 
+    # SSL 证书配置（示例）
+    ssl_certificate     /path/to/ssl/fullchain.pem;
+    ssl_certificate_key /path/to/ssl/privkey.pem;
+
+    # 前端静态资源
     location / {
         root /path/to/dist;
         try_files $uri $uri/ /index.html;
     }
 
+    # 后端 API 代理
     location /api/ {
-        proxy_pass [http://127.0.0.1:8080/api/](http://127.0.0.1:8080/api/);
+        proxy_pass [http://http://127.0.0.1:8080/api/](http://http://127.0.0.1:8080/api/);
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 }
-📝 Roadmap (未来计划)
-[ ] Fog Integration: 导入 GPX 轨迹，利用 PostGIS 避开已探索区域。
+```
 
-[ ] EV Mode: 结合充电桩数据，防止随机到无充电设施的荒野。
+如果需要同时开放 80 端口做重定向，也可以加一个 `server` 块，将 HTTP 流量重定向到 HTTPS。
 
-[ ] Captain's Log: 记录每次探索的足迹和照片。
+---
 
-🤝 Contributing
-欢迎提交 Issue 和 PR！让我们一起驱散迷雾。
+## 📝 Roadmap / 未来计划
+
+- [ ]  Fog Integration: 导入 GPX 轨迹，利用 PostGIS 避开已探索区域。
+- [ ]  EV Mode: 结合充电桩数据，防止随机到无充电设施的荒野。
+- [ ]  Captain’s Log: 记录每次探索的足迹和照片。
+
+---
+
+## 🤝 Contributing / 参与贡献
+
+欢迎提交 Issue 和 PR，一起让更多人走出熟悉的路径，去探索城市的未知角落。
+
+---
 
 Created by Andy with ❤️ & Java.
+
+---
+
+如果你希望：
+
+- 中英分成两个独立 README（如 [`README.md`](http://README.md) + `README_[zh-CN.md](http://zh-CN.md)`），或者
+- 增加「配置说明」、「API 文档」等章节
+
+告诉我一下，我可以在这个版本上继续细化。
