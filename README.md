@@ -194,12 +194,3 @@ server {
 ---
 
 Created by Andy with ❤️ & Java.
-
----
-
-如果你希望：
-
-- 中英分成两个独立 README（如 [`README.md`](http://README.md) + `README_[zh-CN.md](http://zh-CN.md)`），或者
-- 增加「配置说明」、「API 文档」等章节
-
-告诉我一下，我可以在这个版本上继续细化。
