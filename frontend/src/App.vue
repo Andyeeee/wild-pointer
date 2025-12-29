@@ -31,18 +31,28 @@
             <span v-else>📍</span>
           </button>
         </div>
-
         <p v-if="locError" class="loc-error-text">{{ locError }}</p>
       </div>
 
-      <div class="card">
-        <div class="input-group">
-          <label>最小半径 (km)</label>
-          <input type="number" v-model.number="minRadius" />
+      <div class="map-wrapper">
+        <div id="amap-container"></div>
+
+        <div v-if="result" class="result-overlay">
+          <span>📏 {{ result.distance }} km</span>
+          <span>🧭 {{ result.angle }}°</span>
         </div>
-        <div class="input-group">
-          <label>最大半径 (km)</label>
-          <input type="number" v-model.number="maxRadius" />
+      </div>
+
+      <div class="card control-panel">
+        <div class="input-row">
+          <div class="input-group">
+            <label>最小 (km)</label>
+            <input type="number" v-model.number="minRadius" />
+          </div>
+          <div class="input-group">
+            <label>最大 (km)</label>
+            <input type="number" v-model.number="maxRadius" />
+          </div>
         </div>
 
         <p v-if="apiError" class="error">{{ apiError }}</p>
@@ -52,16 +62,14 @@
             :disabled="loading || !currentLoc"
             class="jump-btn"
         >
-          {{ loading ? '正在计算航线...' : '启动超空间引擎' }}
+          {{ loading ? '正在规划路线...' : '启动超空间引擎' }}
+        </button>
+
+        <button v-if="result" @click="openExternalMap" class="nav-btn">
+          🚀 确认路线并出发
         </button>
       </div>
 
-      <div v-if="result" class="result-box">
-        <p>🎯 目标锁定</p>
-        <p>距离: {{ result.distance }} km</p>
-        <p>方向: {{ result.angle }}°</p>
-        <button @click="openMap" class="nav-btn">打开高德地图出发</button>
-      </div>
     </div>
   </div>
 </template>
@@ -70,8 +78,6 @@
 import axios from 'axios';
 import AMapLoader from '@amap/amap-jsapi-loader';
 
-// 🔥🔥🔥 请在此处填入你的高德 Key 和 安全密钥 🔥🔥🔥
-// Web端(JSAPI) Key
 const AMAP_KEY = process.env.VUE_APP_AMAP_KEY;
 const AMAP_SECURITY_CODE = process.env.VUE_APP_AMAP_SECURITY_CODE;
 
@@ -89,46 +95,58 @@ export default {
       apiError: '',
       result: null,
 
-      // 高德相关对象
-      geocoder: null, // 逆地理编码插件实例
+      // 地图相关对象
+      AMap: null, // 🔥 修复1: 增加这个变量，用来存储高德核心类
+      map: null,
+      geocoder: null,
+      driving: null,
+      currentMarker: null,
     };
   },
   mounted() {
-    // 1. 配置安全密钥 (必须在加载 loader 之前)
     window._AMapSecurityConfig = {
       securityJsCode: AMAP_SECURITY_CODE,
     };
-
-    // 2. 初始化高德 API
     this.initAMap();
   },
   methods: {
-    // --- 初始化高德地图资源 ---
     initAMap() {
       this.currentAddress = "正在加载地图资源...";
 
       AMapLoader.load({
         key: AMAP_KEY,
         version: "2.0",
-        plugins: ['AMap.Geocoder'] // 🔥 重点：加载逆地理编码插件
+        plugins: ['AMap.Geocoder', 'AMap.Driving']
       })
           .then((AMap) => {
-            // 初始化 Geocoder
-            this.geocoder = new AMap.Geocoder({
-              city: "全国", // 范围
-              radius: 1000  // 搜索半径
+            // 🔥 修复1: 把 AMap 类存到 this 中，供其他方法使用
+            this.AMap = AMap;
+
+            this.map = new AMap.Map("amap-container", {
+              viewMode: "3D",
+              zoom: 13,
+              center: [116.397428, 39.90923],
+              mapStyle: 'amap://styles/dark',
             });
 
-            // 资源加载完毕后，开始定位
+            this.geocoder = new AMap.Geocoder({
+              city: "全国",
+              radius: 1000
+            });
+
+            this.driving = new AMap.Driving({
+              map: this.map,
+              hideMarkers: false,
+            });
+
             this.refreshLocation();
           })
           .catch((e) => {
             console.error(e);
-            this.locError = "地图资源加载失败，请检查 Key";
+            this.locError = "地图加载失败，请检查 Key";
           });
     },
 
-    // --- 核心定位逻辑 ---
     refreshLocation() {
       this.isLocating = true;
       this.locError = '';
@@ -146,8 +164,23 @@ export default {
               lon: position.coords.longitude
             };
 
-            // 🔥 拿到坐标后，调用高德解析地址
             this.getAmapAddress(this.currentLoc.lat, this.currentLoc.lon);
+
+            if (this.map && this.AMap) { // 确保 AMap 存在
+              const center = [this.currentLoc.lon, this.currentLoc.lat];
+              this.map.setZoomAndCenter(15, center);
+
+              if (!this.currentMarker) {
+                // 🔥 修复1: 使用 this.AMap 而不是 AMap
+                this.currentMarker = new this.AMap.Marker({
+                  position: center,
+                  map: this.map,
+                  title: '我的位置'
+                });
+              } else {
+                this.currentMarker.setPosition(center);
+              }
+            }
           },
           (err) => {
             this.isLocating = false;
@@ -158,33 +191,27 @@ export default {
       );
     },
 
-    // --- 🔥 高德逆地理编码 (替代 OpenStreetMap) ---
     getAmapAddress(lat, lon) {
-      if (!this.geocoder) {
-        this.currentAddress = "地图组件未就绪";
-        this.isLocating = false;
-        return;
-      }
-
-      // 注意高德参数顺序是 [经度, 纬度] (lon, lat)
+      if (!this.geocoder) return;
       this.geocoder.getAddress([lon, lat], (status, result) => {
-        this.isLocating = false; // 停止转圈
-
+        this.isLocating = false;
         if (status === 'complete' && result.regeocode) {
-          // formattedAddress 是高德拼接好的标准地址：xx省xx市xx区xx路xx号
           this.currentAddress = result.regeocode.formattedAddress;
         } else {
           this.currentAddress = "未知荒野";
-          console.error('地址解析失败:', result);
         }
       });
     },
 
-    // --- 业务逻辑 ---
     startExploration() {
+      if(!this.currentLoc) return;
+
       this.loading = true;
       this.apiError = '';
-      this.result = null;
+
+      if(this.driving) this.driving.clear();
+      // 生成结果前，先清除当前位置标记，避免视觉干扰（可选）
+      if(this.currentMarker) this.currentMarker.setMap(null);
 
       const API_URL = '/api/generate';
       axios.get(API_URL, {
@@ -197,39 +224,45 @@ export default {
       })
           .then(res => {
             this.result = res.data;
+
+            this.driving.search(
+                [this.currentLoc.lon, this.currentLoc.lat],
+                [this.result.destLon, this.result.destLat],
+                (status) => { // 🔥 修复2: 删掉了 unused 'result' 参数
+                  if (status === 'complete') {
+                    console.log('路线规划成功');
+                  } else {
+                    this.apiError = '路线规划失败(可能跨海或无法到达)';
+                    // 强制移动视角
+                    this.map.setCenter([this.result.destLon, this.result.destLat]);
+                  }
+                }
+            );
           })
           .catch(err => {
-            this.apiError = "连接失败: " + err.message;
+            this.apiError = "计算失败: " + err.message;
           })
           .finally(() => {
             this.loading = false;
           });
     },
 
-    openMap() {
+    openExternalMap() {
       if (!this.result) return;
       const { destLat, destLon } = this.result;
       const u = navigator.userAgent;
       const isMobile = !!u.match(/Android|iPhone/i);
 
-      // 电脑端
-      const pcUrl = `https://uri.amap.com/marker?position=${destLon},${destLat}&name=神秘目的地&callnative=0`;
-
-      // 手机端
-      let mobileUrl = "";
-      if (u.indexOf('Android') > -1) {
-        mobileUrl = `androidamap://route?sourceApplication=WildPointer&dlat=${destLat}&dlon=${destLon}&dev=0&t=0`;
-      } else {
-        mobileUrl = `iosamap://path?sourceApplication=WildPointer&dlat=${destLat}&dlon=${destLon}&dev=0&t=0`;
-      }
+      const pcUrl = `https://uri.amap.com/navigation?to=${destLon},${destLat},神秘目的地&mode=car&callnative=1`;
 
       if (!isMobile) {
         window.open(pcUrl, '_blank');
       } else {
-        window.location.href = mobileUrl;
-        setTimeout(() => {
-          if (!document.hidden) window.location.href = pcUrl;
-        }, 2500);
+        if (u.indexOf('Android') > -1) {
+          window.location.href = `androidamap://route?sourceApplication=WildPointer&dlat=${destLat}&dlon=${destLon}&dev=0&t=0`;
+        } else {
+          window.location.href = `iosamap://path?sourceApplication=WildPointer&dlat=${destLat}&dlon=${destLon}&dev=0&t=0`;
+        }
       }
     }
   }
@@ -237,7 +270,7 @@ export default {
 </script>
 
 <style>
-/* 保持你的暗黑极客风格 */
+/* 保持样式不变 */
 body {
   background-color: #1a1a1a;
   color: #ecf0f1;
@@ -247,76 +280,98 @@ body {
 .container {
   max-width: 400px;
   margin: 0 auto;
-  padding: 40px 20px;
+  padding: 20px;
   text-align: center;
 }
-h1 { color: #42b983; margin-bottom: 5px; }
-.subtitle { color: #7f8c8d; font-size: 0.9em; margin-bottom: 25px; }
+h1 { color: #42b983; margin-bottom: 5px; font-size: 1.8rem; }
+.subtitle { color: #7f8c8d; font-size: 0.9em; margin-bottom: 20px; }
 
-/* 定位卡片 */
 .location-card {
   background: #34495e;
   border-radius: 12px;
-  padding: 15px;
-  margin-bottom: 20px;
+  padding: 12px 15px;
+  margin-bottom: 15px;
   text-align: left;
   font-size: 0.9rem;
-  border: 1px solid #465c71;
   box-shadow: 0 4px 6px rgba(0,0,0,0.2);
 }
-.loc-row { display: flex; align-items: center; margin-bottom: 8px; }
-.address-row { justify-content: space-between; margin-bottom: 0; }
-.address-wrapper { display: flex; align-items: center; overflow: hidden; }
+.loc-row { display: flex; align-items: center; margin-bottom: 6px; }
 .loc-label { color: #bdc3c7; font-weight: bold; margin-right: 10px; flex-shrink: 0; }
 .loc-value { color: #fff; }
 .mono { font-family: monospace; color: #42b983; }
-.address-text {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 200px; display: block;
-}
-.loc-error-text { color: #e74c3c; font-size: 0.8rem; margin: 5px 0 0 0; }
 
-/* 刷新按钮 */
+.address-row { margin-bottom: 0; align-items: flex-start; }
+.address-wrapper { display: flex; align-items: flex-start; flex-grow: 1; margin-right: 5px; }
+.address-text {
+  white-space: normal; overflow: visible; line-height: 1.4; word-break: break-all;
+}
+
 .refresh-btn {
-  width: 32px; height: 32px; border-radius: 50%;
+  width: 28px; height: 28px; border-radius: 50%;
   border: 1px solid #5d6d7e; background: #2c3e50; color: white;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  padding: 0; transition: all 0.2s; margin-left: 10px; flex-shrink: 0;
+  padding: 0; flex-shrink: 0; margin-top: -2px;
 }
 .refresh-btn:hover { background: #42b983; border-color: #42b983; }
-.refresh-btn:disabled { opacity: 0.6; cursor: wait; }
-.spinning { display: inline-block; animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* 主卡片 */
-.card {
+.map-wrapper {
+  position: relative;
+  background: #2c3e50;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 15px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+#amap-container {
+  width: 100%;
+  height: 350px;
+}
+.result-overlay {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  background: rgba(35, 48, 61, 0.9);
+  padding: 8px;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-around;
+  font-weight: bold;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.1);
+  animation: fadeIn 0.3s;
+}
+
+.control-panel {
   background: #2c3e50; padding: 20px; border-radius: 12px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
 }
-.input-group { margin-bottom: 15px; text-align: left; }
-.input-group label { display: block; font-size: 0.85em; color: #bdc3c7; margin-bottom: 5px; }
+.input-row { display: flex; gap: 10px; margin-bottom: 15px; }
+.input-group { flex: 1; text-align: left; }
+.input-group label { display: block; font-size: 0.8em; color: #bdc3c7; margin-bottom: 5px; }
 .input-group input {
-  width: 100%; box-sizing: border-box; padding: 12px;
+  width: 100%; box-sizing: border-box; padding: 10px;
   background: #1a1a1a; border: 1px solid #465c71; color: #fff;
-  border-radius: 8px; font-size: 1rem;
+  border-radius: 6px; font-size: 0.95rem; text-align: center;
 }
-.input-group input:focus { outline: none; border-color: #42b983; }
 
 .jump-btn {
-  width: 100%; padding: 15px; margin-top: 10px;
+  width: 100%; padding: 15px;
   background: linear-gradient(135deg, #42b983 0%, #3aa876 100%);
   border: none; color: white; font-weight: bold; border-radius: 8px;
-  cursor: pointer; font-size: 1rem; transition: transform 0.1s;
+  cursor: pointer; font-size: 1rem;
 }
-.jump-btn:active { transform: scale(0.98); }
 .jump-btn:disabled { background: #7f8c8d; cursor: not-allowed; }
 
-.result-box { margin-top: 30px; animation: fadeIn 0.5s; }
 .nav-btn {
-  background: #e67e22; color: white; border: none; padding: 12px 25px;
-  border-radius: 25px; font-weight: bold; margin-top: 15px; cursor: pointer;
-  box-shadow: 0 4px 6px rgba(230, 126, 34, 0.3);
+  width: 100%; margin-top: 15px; padding: 12px;
+  background: #e67e22; color: white; border: none; border-radius: 25px;
+  font-weight: bold; cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.2);
 }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+.spinning { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 .error { color: #ff6b6b; font-size: 0.9em; margin-top: 10px; }
+.loc-error-text { color: #e74c3c; font-size: 0.8rem; margin: 5px 0 0 0; }
 </style>
