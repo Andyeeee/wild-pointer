@@ -1,0 +1,19 @@
+# --- Java / IntelliJ ---
+target/
+*.class
+*.log
+.idea/
+*.iml
+.mvn/
+mvnw
+mvnw.cmd
+
+# --- Node / Vue ---
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+
+# --- System ---
+Thumbs.db
