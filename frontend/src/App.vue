@@ -115,6 +115,8 @@ export default {
   name: 'App',
   data() {
     return {
+      // 🔥 新增：用来存储中间途经点 {lat, lon}
+      currentWaypoint: null,
       placeSearch: null, // 🔥 新增：地点搜索插件实例
       currentMode: 'random',
       useGpxFilter: false,
@@ -278,6 +280,7 @@ export default {
     },
 
     startRandomMode() {
+      this.currentWaypoint = null;
       axios.get('/api/generate-random', {
         params: {
           lat: this.currentLoc.lat,
@@ -306,11 +309,14 @@ export default {
         return;
       }
       this.finalDest = this.selectedDestLoc;
+      this.currentWaypoint = null; // 先重置
 
+      // 1. 【普通模式】直接去终点
       if (!this.useGpxFilter) {
         this.planRoute(
             [this.currentLoc.lon, this.currentLoc.lat],
-            [this.selectedDestLoc.lon, this.selectedDestLoc.lat]
+            [this.selectedDestLoc.lon, this.selectedDestLoc.lat],
+            [] // 空途经点
         );
         return;
       }
@@ -325,10 +331,17 @@ export default {
         }
       }).then(res => {
         const waypoint = res.data;
+
+        // 保存中间点用于跳转 APP
+        this.currentWaypoint = { lat: waypoint.wayLat, lon: waypoint.wayLon };
+
+        // 🔥 核心调用：
+        // 参数3 必须是数组格式: [ [经度, 纬度] ]
+        // 即使只有一个点，也要包在数组里
         this.planRoute(
-            [this.currentLoc.lon, this.currentLoc.lat],
-            [this.selectedDestLoc.lon, this.selectedDestLoc.lat],
-            [[waypoint.wayLon, waypoint.wayLat]]
+            [this.currentLoc.lon, this.currentLoc.lat], // 起点
+            [this.selectedDestLoc.lon, this.selectedDestLoc.lat], // 终点
+            [ [waypoint.wayLon, waypoint.wayLat] ] // 途经点数组
         );
       }).catch(err => {
         console.error(err);
@@ -340,11 +353,25 @@ export default {
       });
     },
 
+    // 通用规划方法 (高德画线)
     planRoute(start, end, waypoints = []) {
-      this.driving.search(start, end, { waypoints: waypoints }, (status, result) => {
+
+      // 构造配置对象，对应你文档里的 opts
+      const searchOpts = {
+        // 高德要求 waypoints 是一个数组，里面可以是坐标 [lon, lat]
+        waypoints: waypoints
+      };
+
+      // 调用高德 Driving 插件
+      // 参数1: 起点
+      // 参数2: 终点
+      // 参数3: 配置项 (包含途经点)
+      // 参数4: 回调
+      this.driving.search(start, end, searchOpts, (status, result) => {
         this.loading = false;
         if (status === 'complete') {
           this.result = { destLat: end[1], destLon: end[0] };
+
           if (result.routes && result.routes.length > 0) {
             const route = result.routes[0];
             this.resultInfo = {
@@ -352,28 +379,70 @@ export default {
               duration: Math.ceil(route.time / 60) + ' 分钟'
             };
           }
+          console.log('✅ 预览路线规划成功，包含途经点:', waypoints);
         } else {
           this.apiError = '路线规划失败: ' + status;
+          console.error(result);
         }
       });
     },
 
     openExternalMap() {
-      if (!this.finalDest) return;
-      const { lat, lon } = this.finalDest;
-      const u = navigator.userAgent;
-      const isMobile = !!u.match(/Android|iPhone/i);
-      const pcUrl = `https://uri.amap.com/navigation?to=${lon},${lat},目的地&mode=car&callnative=1`;
-
-      if (!isMobile) {
-        window.open(pcUrl, '_blank');
-      } else {
-        if (u.indexOf('Android') > -1) {
-          window.location.href = `androidamap://route?sourceApplication=WildPointer&dlat=${lat}&dlon=${lon}&dev=0&t=0`;
-        } else {
-          window.location.href = `iosamap://path?sourceApplication=WildPointer&dlat=${lat}&dlon=${lon}&dev=0&t=0`;
-        }
+      // 1. 安全检查
+      if (!this.finalDest || !this.currentLoc) {
+        alert("坐标不全，无法出发");
+        return;
       }
+
+      const end = this.finalDest;
+      const mid = this.currentWaypoint;
+      const appName = 'WildPointer';
+
+      // 2. 坐标精度处理
+      const eLon = Number(end.lon).toFixed(6);
+      const eLat = Number(end.lat).toFixed(6);
+      // 注意：路径规划协议中，终点名称参数通常是 dname
+      const eName = encodeURIComponent(end.name || '探索终点');
+
+      // =============================================
+      // 策略 A: 破雾模式 (必须带途经点) -> 保持 Web 协议
+      // =============================================
+      if (mid) {
+        console.log("⚔️ 破雾模式：使用 Web 协议以支持途经点");
+        const mLon = Number(mid.lon).toFixed(6);
+        const mLat = Number(mid.lat).toFixed(6);
+
+        // 这里的 callnative=1 依然会尝试拉起 App，显示带途经点的规划页
+        let webUrl = `https://uri.amap.com/navigation?to=${eLon},${eLat},${eName}&mode=car&policy=1&src=${appName}&coordinate=gaode&callnative=1`;
+        webUrl += `&via=${mLon},${mLat},神秘中间点`;
+
+        window.location.href = webUrl;
+        return;
+      }
+
+      // =============================================
+      // 策略 B: 直达模式 (随机/普通导航) -> 改用【路径规划】原生协议
+      // =============================================
+      console.log("🚀 直达模式：使用原生路径规划协议");
+
+      const u = navigator.userAgent;
+      const isiOS = !!u.match(/\(i[^;]+;( U;)? CPU.+Mac OS X/);
+      const isAndroid = u.indexOf('Android') > -1 || u.indexOf('Adr') > -1;
+
+      let schemaUrl = '';
+
+      if (isiOS) {
+        // [iOS] 改用 path (路径规划)
+        // dlat/dlon: 终点坐标, t: 0 (驾车)
+        schemaUrl = `iosamap://path?sourceApplication=${appName}&dname=${eName}&dlat=${eLat}&dlon=${eLon}&dev=0&t=0`;
+      }
+      else if (isAndroid) {
+        // [Android] 改用 route/plan (路径规划)
+        // dlat/dlon: 终点坐标, t: 0 (驾车)
+        schemaUrl = `androidamap://route/plan?sourceApplication=${appName}&dname=${eName}&dlat=${eLat}&dlon=${eLon}&dev=0&t=0`;
+      }
+      // 执行跳转
+      window.location.href = schemaUrl;
     }
   }
 };
@@ -477,5 +546,15 @@ input:checked + .slider:before { transform: translateX(22px); }
 
 .search-btn:active {
   transform: scale(0.95);
+}
+
+.app-version {
+  position: fixed;
+  bottom: 5px;
+  right: 5px;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.3); /* 半透明黑色，不抢眼 */
+  z-index: 999; /* 保证在地图上面 */
+  pointer-events: none; /* 让点击穿透，不影响操作地图 */
 }
 </style>
