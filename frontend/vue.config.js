@@ -8,7 +8,7 @@ module.exports = defineConfig({
         // 你的后端服务地址 (Spring Boot 默认是 8080)
         proxy: {
             '/api': {
-                target: 'http://localhost:8081',
+                target: 'http://localhost:8080',
                 changeOrigin: true,
                 pathRewrite: {
                     // 如果你的后端接口本身就是 /api 开头，这里就不需要 pathRewrite
