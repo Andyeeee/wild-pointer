@@ -1,9 +1,10 @@
 package org.andywang.wildpointer.controller;
 
 import cn.hutool.http.HttpUtil;
+import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import lombok.var;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -16,9 +17,29 @@ import java.util.Map;
 @RequestMapping("/api")
 public class WildController {
 
+    // 从环境变量读取高德API配置（更安全）
+    @Value("${amap.js-api-key:}")
+    private String amapJsApiKey;
+
+    @Value("${amap.security-code:}")
+    private String amapSecurityCode;
+
     // 替换为你的高德 Web服务 Key (注意不是 JS API 的 Key)
     // 这里的 Key 必须支持 "Web服务" 类型的 API
-    private static final String AMAP_WEB_KEY = "你的Web服务Key";
+    @Value("${amap.web-service-key:}")
+    private String amapWebKey;
+
+    /**
+     * 新增：获取高德地图前端配置接口
+     * 前端需要的配置由后端统一提供，避免在前端暴露API密钥
+     */
+    @GetMapping("/config/amap")
+    public Map<String, String> getAmapConfig() {
+        Map<String, String> config = new HashMap<>();
+        config.put("key", amapJsApiKey);
+        config.put("securityCode", amapSecurityCode);
+        return config;
+    }
 
     /**
      * 模式一：完全随机生成接口
@@ -36,10 +57,10 @@ public class WildController {
             @RequestParam double maxRadius,
             @RequestParam(defaultValue = "false") boolean useGpx
     ) {
-        // 1. 数学生成：先算出一个“野点” (可能在水里)
+        // 1. 数学生成：先算出一个"野点" (可能在水里)
         double[] randomPoint = calculateRandomPoint(lat, lon, minRadius, maxRadius);
 
-        // 2. 道路吸附：把“野点”纠正到最近的路上
+        // 2. 道路吸附：把"野点"纠正到最近的路上
         // 如果吸附失败（比如深山老林没有路），就降级返回原始点
         double[] snappedPoint = roadSnapping(randomPoint[0], randomPoint[1]);
 
@@ -160,7 +181,7 @@ public class WildController {
             // radius=1000 查找周边 1km 内的道路
             String url = String.format(
                     "https://restapi.amap.com/v3/geocode/regeo?key=%s&location=%f,%f&extensions=all&radius=1000&roadlevel=0",
-                    AMAP_WEB_KEY, lon, lat // 高德接口是 经度,纬度
+                    amapWebKey, lon, lat // 高德接口是 经度,纬度
             );
 
             // 发送 HTTP GET 请求
@@ -170,7 +191,7 @@ public class WildController {
             if ("1".equals(json.getStr("status"))) {
                 JSONObject regeocode = json.getJSONObject("regeocode");
                 // 获取道路列表
-                var roads = regeocode.getJSONArray("roads");
+                JSONArray roads = regeocode.getJSONArray("roads");
 
                 if (roads != null && !roads.isEmpty()) {
                     // 取第一条路（最近的路）
