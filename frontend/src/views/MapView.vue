@@ -98,7 +98,7 @@
 </template>
 
 <script>
-import axios from 'axios';
+import api from '@/utils/axios';
 import AMapLoader from '@amap/amap-jsapi-loader';
 
 export default {
@@ -111,6 +111,14 @@ export default {
     isDarkMode: {
       type: Boolean,
       default: false
+    },
+    fogVersion: {
+      type: Number,
+      default: 0
+    },
+    fogColor: {
+      type: String,
+      default: '#42b983'
     }
   },
   data() {
@@ -138,12 +146,25 @@ export default {
       geocoder: null,
       driving: null,
       autoComplete: null,
-      isRouteFavorited: false
+      isRouteFavorited: false,
+      fogCells: null,
+      fogCanvas: null,
+      fogLayer: null,
+      fogKeySet: null
     };
   },
   watch: {
     isDarkMode(val) {
       this.applyTheme(val);
+    },
+    fogVersion() {
+      // 新 GPX 上传后清空缓存重新加载
+      this.fogCells = [];
+      this.fogKeySet = new Set();
+      if (this.map) this.loadFogCells();
+    },
+    fogColor() {
+      if (this.map) this.renderFogLayer();
     }
   },
   created() {
@@ -152,10 +173,15 @@ export default {
   mounted() {
     this.initAMap();
   },
+  beforeDestroy() {
+    if (this.fogLayer) {
+      this.fogLayer.setMap(null);
+    }
+  },
   methods: {
     async fetchAmapConfig() {
       try {
-        const response = await axios.get('/api/config/amap');
+        const response = await api.get('/api/config/amap');
         this.amapConfig = response.data;
         console.log('✅ 高德地图配置已从后端加载');
       } catch (error) {
@@ -250,6 +276,11 @@ export default {
           }
         });
         this.refreshLocation();
+
+        // 初始化迷雾覆盖层
+        if (this.user) {
+          this.initFogOverlay();
+        }
       }).catch((e) => {
         console.error(e);
         this.apiError = "地图加载失败";
@@ -294,6 +325,7 @@ export default {
     },
 
     getAmapAddress(lat, lon) {
+      if (!this.geocoder) return;
       this.geocoder.getAddress([lon, lat], (status, result) => {
         if (status === 'complete') this.currentAddress = result.regeocode.formattedAddress;
       });
@@ -332,7 +364,7 @@ export default {
 
     startRandomMode() {
       this.currentWaypoint = null;
-      axios.get('/api/generate-random', {
+      api.get('/api/generate-random', {
         params: {
           lat: this.currentLoc.lat,
           lon: this.currentLoc.lon,
@@ -346,6 +378,11 @@ export default {
         this.updateMarker('waypoint', null);
         this.updateMarker('end', [dest.destLon, dest.destLat]);
         this.planRoute([this.currentLoc.lon, this.currentLoc.lat], [dest.destLon, dest.destLat]);
+        if (this.useGpxFilter && dest.isFogCleared) {
+          this.apiError = '⚔️ 发现未探索区域！';
+        } else if (this.useGpxFilter) {
+          this.apiError = '🌫️ 该区域已探索过';
+        }
       }).catch(err => {
         this.apiError = "随机生成失败: " + err.message;
         this.loading = false;
@@ -365,7 +402,7 @@ export default {
         this.planRoute([this.currentLoc.lon, this.currentLoc.lat], [this.selectedDestLoc.lon, this.selectedDestLoc.lat], []);
         return;
       }
-      axios.get('/api/generate-waypoint', {
+      api.get('/api/generate-waypoint', {
         params: {
           startLat: this.currentLoc.lat, startLon: this.currentLoc.lon,
           endLat: this.selectedDestLoc.lat, endLon: this.selectedDestLoc.lon,
@@ -453,16 +490,19 @@ export default {
         return;
       }
       try {
-        await axios.post('/api/routes', {
-          userId: this.user.userId,
-          name: `${this.currentMode === 'random' ? '随机探索' : '目的地路线'} - ${new Date().toLocaleString('zh-CN')}`,
-          startLocation: this.currentAddress,
-          endLocation: this.selectedDestLoc?.name || '目的地',
-          distance: this.resultInfo?.distance || '未知',
-          duration: this.resultInfo?.duration || '未知',
-          routeType: this.currentMode === 'random' ? 'RANDOM' : 'DESTINATION'
-        });
-        this.apiError = '✅ 已保存到历史';
+        const res = (await api.post('/api/routes', {
+            name: `${this.currentMode === 'random' ? '随机探索' : '目的地路线'} - ${new Date().toLocaleString('zh-CN')}`,
+            startLocation: this.currentAddress,
+            endLocation: this.selectedDestLoc?.name || '目的地',
+            startLat: this.currentLoc?.lat,
+            startLon: this.currentLoc?.lon,
+            endLat: this.finalDest?.lat,
+            endLon: this.finalDest?.lon,
+            distance: this.resultInfo?.distance || '未知',
+            duration: this.resultInfo?.duration || '未知',
+            routeType: this.currentMode === 'random' ? 'RANDOM' : 'DESTINATION'
+        })).data;
+        this.apiError = res.success ? '✅ 已保存到历史' : ('保存失败: ' + res.message);
       } catch (err) {
         this.apiError = '保存失败: ' + err.message;
       }
@@ -475,15 +515,101 @@ export default {
       }
       this.isRouteFavorited = !this.isRouteFavorited;
       if (this.isRouteFavorited) {
-        axios.post('/api/favorites', {
-          userId: this.user.userId,
-          name: this.selectedDestLoc?.name || '我的收藏路线',
-          location: `${this.selectedDestLoc?.lon},${this.selectedDestLoc?.lat}`,
-          type: 'ROUTE'
+        api.post('/api/favorites', {
+            name: this.selectedDestLoc?.name || '我的收藏路线',
+            location: `${this.selectedDestLoc?.lon},${this.selectedDestLoc?.lat}`,
+            type: 'ROUTE'
         }).catch(() => {
           this.apiError = '收藏失败';
           this.isRouteFavorited = false;
         });
+      }
+    },
+
+    initFogOverlay() {
+      this.fogCanvas = document.createElement('canvas');
+      this.fogLayer = new this.AMap.CustomLayer(this.fogCanvas, {
+        zIndex: 120,
+        zooms: [3, 20]
+      });
+      this.fogLayer.render = () => this.renderFogLayer();
+      this.fogLayer.setMap(this.map);
+      this.fogCells = [];
+      this.fogKeySet = new Set();
+      this.loadFogCells();
+      this.map.on('moveend', () => this.loadFogCells());
+    },
+
+    async loadFogCells() {
+      if (!this.user || !this.map) return;
+      try {
+        const bounds = this.map.getBounds();
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+        const res = (await api.get('/api/fog/cells', {
+          params: {
+            southLat: sw.lat,
+            northLat: ne.lat,
+            westLon: sw.lng,
+            eastLon: ne.lng
+          }
+        })).data;
+        if (res.success) {
+          let hasNew = false;
+          for (const cell of res.data) {
+            const key = cell.gridLat + ',' + cell.gridLon;
+            if (!this.fogKeySet.has(key)) {
+              this.fogKeySet.add(key);
+              this.fogCells.push(cell);
+              hasNew = true;
+            }
+          }
+          if (hasNew && this.fogLayer) this.fogLayer.render();
+        }
+      } catch (error) {
+        console.error('加载迷雾数据失败:', error);
+      }
+    },
+
+    renderFogLayer() {
+      if (!this.fogCanvas || !this.AMap || !this.map) return;
+      const canvas = this.fogCanvas;
+      const ctx = canvas.getContext('2d');
+      const size = this.map.getSize();
+      const w = size.getWidth();
+      const h = size.getHeight();
+
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.clearRect(0, 0, w, h);
+      ctx.imageSmoothingEnabled = false;
+
+      const cells = this.fogCells;
+      if (!cells || cells.length === 0) return;
+
+      const bounds = this.map.getBounds();
+      const ne = bounds.getNorthEast();
+      const sw = bounds.getSouthWest();
+      const southLat = sw.lat * 10000;
+      const northLat = ne.lat * 10000;
+      const westLng = sw.lng * 10000;
+      const eastLng = ne.lng * 10000;
+      const lngRange = ne.lng - sw.lng;
+      const gridSizeDeg = 0.0001;
+      const cellW = Math.max(1, Math.ceil(gridSizeDeg / lngRange * w));
+
+      const hex = this.fogColor.replace('#', '');
+      ctx.fillStyle = 'rgba(' + parseInt(hex.substring(0, 2), 16) + ','
+        + parseInt(hex.substring(2, 4), 16) + ','
+        + parseInt(hex.substring(4, 6), 16) + ',0.25)';
+
+      for (let i = 0, len = cells.length; i < len; i++) {
+        const c = cells[i];
+        if (c.gridLat < southLat || c.gridLat > northLat || c.gridLon < westLng || c.gridLon > eastLng) continue;
+        const pixel = this.map.lngLatToContainer(new this.AMap.LngLat(c.gridLon / 10000, c.gridLat / 10000));
+        ctx.fillRect(pixel.getX() | 0, pixel.getY() | 0, cellW, cellW);
       }
     }
   }

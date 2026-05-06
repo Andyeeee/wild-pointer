@@ -1,73 +1,71 @@
 package org.andywang.wildpointer.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.andywang.wildpointer.common.ApiResponse;
+import org.andywang.wildpointer.dto.PageResult;
+import org.andywang.wildpointer.dto.SaveRouteResponse;
 import org.andywang.wildpointer.entity.Route;
-import org.andywang.wildpointer.repository.RouteRepository;
+import org.andywang.wildpointer.mapper.RouteMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 
 @Service
 public class RouteService {
 
     @Autowired
-    private RouteRepository routeRepository;
+    private RouteMapper routeMapper;
 
-    /**
-     * 保存新的路线记录
-     */
-    public Map<String, Object> saveRoute(Integer userId, String name, String startLocation, String endLocation, String distance, String duration, String routeType) {
-        Map<String, Object> result = new HashMap<>();
-
+    public ApiResponse<SaveRouteResponse> saveRoute(Integer userId, String name, String startLocation,
+                                                     String endLocation, Double startLat, Double startLon,
+                                                     Double endLat, Double endLon,
+                                                     String distance, String duration, String routeType) {
         Route route = new Route();
         route.setUserId(userId);
         route.setName(name);
         route.setStartLocation(startLocation);
         route.setEndLocation(endLocation);
+        route.setStartLat(startLat);
+        route.setStartLon(startLon);
+        route.setEndLat(endLat);
+        route.setEndLon(endLon);
         route.setDistance(distance);
         route.setDuration(duration);
         route.setRouteType(routeType);
+        routeMapper.insert(route);
 
-        routeRepository.save(route);
-        result.put("success", true);
-        result.put("message", "路线已保存");
-        result.put("routeId", route.getId());
-        return result;
+        return ApiResponse.ok("路线已保存", SaveRouteResponse.builder()
+                .routeId(route.getId())
+                .build());
     }
 
-    /**
-     * 获取用户的历史记录
-     */
-    public List<Route> getUserRoutes(Integer userId) {
-        return routeRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    public PageResult<Route> getUserRoutes(Integer userId, int page, int size) {
+        Page<Route> pageParam = new Page<>(page, size);
+        Page<Route> result = routeMapper.selectPage(pageParam,
+                new LambdaQueryWrapper<Route>()
+                        .eq(Route::getUserId, userId)
+                        .orderByDesc(Route::getCreatedAt));
+        return PageResult.<Route>builder()
+                .records(result.getRecords())
+                .total(result.getTotal())
+                .page(page)
+                .size(size)
+                .totalPages((int) Math.ceil((double) result.getTotal() / size))
+                .build();
     }
 
-    /**
-     * 删除路线记录
-     */
-    public Map<String, Object> deleteRoute(Integer routeId, Integer userId) {
-        Map<String, Object> result = new HashMap<>();
-
-        Optional<Route> routeOpt = routeRepository.findById(routeId);
-        if (!routeOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "路线不存在");
-            return result;
+    public ApiResponse<Void> deleteRoute(Integer routeId, Integer userId) {
+        Route route = routeMapper.selectById(routeId);
+        if (route == null) {
+            return ApiResponse.fail("路线不存在");
         }
-
-        Route route = routeOpt.get();
         if (!route.getUserId().equals(userId)) {
-            result.put("success", false);
-            result.put("message", "无权限删除此路线");
-            return result;
+            return ApiResponse.fail("无权限删除此路线");
         }
 
-        routeRepository.deleteById(routeId);
-        result.put("success", true);
-        result.put("message", "路线已删除");
-        return result;
+        routeMapper.deleteById(routeId);
+        return ApiResponse.ok("路线已删除");
     }
 }

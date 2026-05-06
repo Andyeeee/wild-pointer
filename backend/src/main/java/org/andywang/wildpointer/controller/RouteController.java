@@ -1,13 +1,16 @@
 package org.andywang.wildpointer.controller;
 
+import org.andywang.wildpointer.common.ApiResponse;
+import org.andywang.wildpointer.dto.PageResult;
+import org.andywang.wildpointer.dto.SaveRouteRequest;
+import org.andywang.wildpointer.dto.SaveRouteResponse;
 import org.andywang.wildpointer.entity.Route;
+import org.andywang.wildpointer.security.CurrentUserId;
 import org.andywang.wildpointer.service.RouteService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import javax.validation.Valid;
 
 @RestController
 @RequestMapping("/api/routes")
@@ -16,38 +19,25 @@ public class RouteController {
     @Autowired
     private RouteService routeService;
 
-    /**
-     * 获取用户的历史记录
-     */
-    @GetMapping("/user/{userId}")
-    public List<Route> getUserRoutes(@PathVariable Integer userId) {
-        return routeService.getUserRoutes(userId);
+    @GetMapping
+    public PageResult<Route> getUserRoutes(@CurrentUserId Integer userId,
+                                           @RequestParam(defaultValue = "1") int page,
+                                           @RequestParam(defaultValue = "10") int size) {
+        return routeService.getUserRoutes(userId, page, size);
     }
 
-    /**
-     * 保存新的路线记录
-     */
     @PostMapping
-    public Map<String, Object> saveRoute(
-            @RequestParam Integer userId,
-            @RequestParam String name,
-            @RequestParam(required = false) String startLocation,
-            @RequestParam(required = false) String endLocation,
-            @RequestParam(required = false) String distance,
-            @RequestParam(required = false) String duration,
-            @RequestParam(required = false) String routeType
-    ) {
-        return routeService.saveRoute(userId, name, startLocation, endLocation, distance, duration, routeType);
+    public ApiResponse<SaveRouteResponse> saveRoute(@CurrentUserId Integer userId,
+                                                     @Valid @RequestBody SaveRouteRequest request) {
+        return routeService.saveRoute(userId, request.getName(), request.getStartLocation(),
+                request.getEndLocation(), request.getStartLat(), request.getStartLon(),
+                request.getEndLat(), request.getEndLon(),
+                request.getDistance(), request.getDuration(), request.getRouteType());
     }
 
-    /**
-     * 删除历史记录
-     */
     @DeleteMapping("/{routeId}")
-    public Map<String, Object> deleteRoute(
-            @PathVariable Integer routeId,
-            @RequestParam Integer userId
-    ) {
+    public ApiResponse<Void> deleteRoute(@PathVariable Integer routeId,
+                                         @CurrentUserId Integer userId) {
         return routeService.deleteRoute(routeId, userId);
     }
 }

@@ -2,11 +2,11 @@
   <div class="history-view">
     <div class="history-header">
       <h2>📋 历史记录</h2>
-      <p v-if="routes.length === 0" class="empty-hint">还没有历史记录，去发现页探索吧！</p>
+      <p v-if="routes.length === 0 && !loading" class="empty-hint">还没有历史记录，去发现页探索吧！</p>
     </div>
 
     <div class="routes-list">
-      <div v-for="route in routes" :key="route.id" class="route-item">
+      <div v-for="route in routes" :key="route.id" class="route-item" @click="$emit('view-route', route)">
         <div class="route-info">
           <div class="route-name">{{ route.name }}</div>
           <div class="route-details">
@@ -20,16 +20,27 @@
             <span>🧭 {{ route.duration }}</span>
           </div>
         </div>
-        <div class="route-actions">
+        <div class="route-actions" @click.stop>
+          <button @click="shareRoute(route)" class="share-btn" title="分享">📤</button>
           <button @click="deleteRoute(route.id)" class="delete-btn" title="删除">🗑️</button>
         </div>
+      </div>
+
+      <div v-if="loading" class="loading-hint">加载中...</div>
+
+      <div v-if="hasMore && !loading" class="load-more">
+        <button @click="loadMore" class="load-more-btn">加载更多</button>
+      </div>
+
+      <div v-if="routes.length > 0 && !hasMore" class="no-more">
+        — 已加载全部 —
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import axios from 'axios';
+import api from '@/utils/axios';
 
 export default {
   name: 'HistoryView',
@@ -41,8 +52,17 @@ export default {
   },
   data() {
     return {
-      routes: []
+      routes: [],
+      page: 1,
+      size: 10,
+      total: 0,
+      loading: false
     };
+  },
+  computed: {
+    hasMore() {
+      return this.routes.length < this.total;
+    }
   },
   mounted() {
     this.loadRoutes();
@@ -53,24 +73,66 @@ export default {
         this.routes = [];
         return;
       }
+      this.loading = true;
       try {
-        const response = await axios.get(`/api/routes/user/${this.user.userId}`);
-        this.routes = response.data || [];
+        const response = await api.get('/api/routes', {
+          params: { page: this.page, size: this.size }
+        });
+        const res = response.data;
+        this.routes = res.records || [];
+        this.total = res.total || 0;
       } catch (error) {
         console.error('加载历史记录失败:', error);
         this.routes = [];
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async loadMore() {
+      if (this.loading || !this.hasMore) return;
+      this.page++;
+      this.loading = true;
+      try {
+        const response = await api.get('/api/routes', {
+          params: { page: this.page, size: this.size }
+        });
+        const res = response.data;
+        this.routes = [...this.routes, ...(res.records || [])];
+        this.total = res.total || 0;
+      } catch (error) {
+        console.error('加载更多失败:', error);
+      } finally {
+        this.loading = false;
       }
     },
 
     async deleteRoute(routeId) {
       if (!confirm('确定要删除这条记录吗？')) return;
       try {
-        await axios.delete(`/api/routes/${routeId}`, {
-          params: { userId: this.user.userId }
-        });
+        await api.delete(`/api/routes/${routeId}`);
         this.routes = this.routes.filter(r => r.id !== routeId);
+        this.total--;
       } catch (error) {
         alert('删除失败');
+      }
+    },
+
+    async shareRoute(route) {
+      const text = `我用 Wild Pointer 探索了一条路线：${route.name}，距离 ${route.distance}，耗时 ${route.duration}`;
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Wild Pointer 路线分享', text });
+        } catch (e) {
+          // User cancelled
+        }
+      } else {
+        try {
+          await navigator.clipboard.writeText(text);
+          alert('路线信息已复制到剪贴板');
+        } catch (e) {
+          alert(text);
+        }
       }
     },
 
@@ -131,6 +193,7 @@ export default {
   border-radius: 8px;
   border: 1px solid var(--border-color);
   transition: all 0.3s;
+  cursor: pointer;
 }
 
 .route-item:active {
@@ -189,6 +252,7 @@ export default {
   flex-shrink: 0;
 }
 
+.share-btn,
 .delete-btn {
   background: none;
   border: none;
@@ -198,7 +262,43 @@ export default {
   padding: 4px;
 }
 
+.share-btn:active,
 .delete-btn:active {
   transform: scale(1.2);
+}
+
+.loading-hint {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  padding: 12px;
+}
+
+.load-more {
+  text-align: center;
+  padding: 8px;
+}
+
+.load-more-btn {
+  background: var(--btn-bg);
+  border: 1px solid var(--accent-color);
+  color: var(--accent-color);
+  padding: 8px 24px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.load-more-btn:active {
+  background: var(--accent-color);
+  color: white;
+}
+
+.no-more {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 12px;
 }
 </style>

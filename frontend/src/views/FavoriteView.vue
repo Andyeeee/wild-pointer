@@ -2,7 +2,7 @@
   <div class="favorite-view">
     <div class="favorite-header">
       <h2>⭐ 我的收藏</h2>
-      <p v-if="favorites.length === 0" class="empty-hint">还没有收藏，在发现页收藏喜欢的地点吧！</p>
+      <p v-if="favorites.length === 0 && !loading" class="empty-hint">还没有收藏，在发现页收藏喜欢的地点吧！</p>
     </div>
 
     <div class="favorites-list">
@@ -20,12 +20,22 @@
           <button @click="deleteFavorite(fav.id)" class="delete-btn" title="删除">🗑️</button>
         </div>
       </div>
+
+      <div v-if="loading" class="loading-hint">加载中...</div>
+
+      <div v-if="hasMore && !loading" class="load-more">
+        <button @click="loadMore" class="load-more-btn">加载更多</button>
+      </div>
+
+      <div v-if="favorites.length > 0 && !hasMore" class="no-more">
+        — 已加载全部 —
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import axios from 'axios';
+import api from '@/utils/axios';
 
 export default {
   name: 'FavoriteView',
@@ -37,8 +47,17 @@ export default {
   },
   data() {
     return {
-      favorites: []
+      favorites: [],
+      page: 1,
+      size: 10,
+      total: 0,
+      loading: false
     };
+  },
+  computed: {
+    hasMore() {
+      return this.favorites.length < this.total;
+    }
   },
   mounted() {
     this.loadFavorites();
@@ -49,22 +68,46 @@ export default {
         this.favorites = [];
         return;
       }
+      this.loading = true;
       try {
-        const response = await axios.get(`/api/favorites/user/${this.user.userId}`);
-        this.favorites = response.data || [];
+        const response = await api.get('/api/favorites', {
+          params: { page: this.page, size: this.size }
+        });
+        const res = response.data;
+        this.favorites = res.records || [];
+        this.total = res.total || 0;
       } catch (error) {
         console.error('加载收藏失败:', error);
         this.favorites = [];
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async loadMore() {
+      if (this.loading || !this.hasMore) return;
+      this.page++;
+      this.loading = true;
+      try {
+        const response = await api.get('/api/favorites', {
+          params: { page: this.page, size: this.size }
+        });
+        const res = response.data;
+        this.favorites = [...this.favorites, ...(res.records || [])];
+        this.total = res.total || 0;
+      } catch (error) {
+        console.error('加载更多失败:', error);
+      } finally {
+        this.loading = false;
       }
     },
 
     async deleteFavorite(favoriteId) {
       if (!confirm('确定要删除这个收藏吗？')) return;
       try {
-        await axios.delete(`/api/favorites/${favoriteId}`, {
-          params: { userId: this.user.userId }
-        });
+        await api.delete(`/api/favorites/${favoriteId}`);
         this.favorites = this.favorites.filter(f => f.id !== favoriteId);
+        this.total--;
       } catch (error) {
         alert('删除失败');
       }
@@ -188,5 +231,40 @@ export default {
 
 .delete-btn:active {
   transform: scale(1.2);
+}
+
+.loading-hint {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  padding: 12px;
+}
+
+.load-more {
+  text-align: center;
+  padding: 8px;
+}
+
+.load-more-btn {
+  background: var(--btn-bg);
+  border: 1px solid var(--accent-color);
+  color: var(--accent-color);
+  padding: 8px 24px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.load-more-btn:active {
+  background: var(--accent-color);
+  color: white;
+}
+
+.no-more {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 12px;
 }
 </style>

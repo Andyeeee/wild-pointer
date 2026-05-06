@@ -1,38 +1,28 @@
 package org.andywang.wildpointer.entity;
 
+import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.persistence.*;
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "favorites")
+@TableName("favorites")
 @Data
 @NoArgsConstructor
 public class Favorite {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Integer id;
 
-    @Column(name = "user_id", nullable = false)
+    @TableField("user_id")
     private Integer userId;
 
-    @Column(nullable = false, length = 200)
-    private String name; // 地点/路线名称
+    private String name;
 
-    @Column(length = 500)
-    private String location; // 位置信息（坐标或地址）
+    private String location;
 
-    @Column(length = 50)
-    private String type; // PLACE 或 ROUTE
+    private String type;
 
-    @Column(name = "created_at", nullable = false, updatable = false, columnDefinition = "DATETIME DEFAULT CURRENT_TIMESTAMP")
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
 }

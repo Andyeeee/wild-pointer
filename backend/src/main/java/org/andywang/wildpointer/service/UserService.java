@@ -1,271 +1,305 @@
 package org.andywang.wildpointer.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.andywang.wildpointer.common.ApiResponse;
+import org.andywang.wildpointer.dto.*;
+import org.andywang.wildpointer.entity.Route;
 import org.andywang.wildpointer.entity.User;
-import org.andywang.wildpointer.repository.UserRepository;
+import org.andywang.wildpointer.mapper.FavoriteMapper;
+import org.andywang.wildpointer.mapper.RouteMapper;
+import org.andywang.wildpointer.mapper.UserMapper;
+import org.andywang.wildpointer.security.JwtUtil;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.io.File;
+import java.io.IOException;
+import java.util.UUID;
 
 @Service
 public class UserService {
 
     @Autowired
-    private UserRepository userRepository;
+    private UserMapper userMapper;
 
-    /**
-     * 用户注册
-     */
-    public Map<String, Object> register(String username, String password, String email, String nickname) {
-        Map<String, Object> result = new HashMap<>();
+    @Autowired
+    private RouteMapper routeMapper;
 
-        // 验证
-        if (username == null || username.trim().isEmpty()) {
-            result.put("success", false);
-            result.put("message", "用户名不能为空");
-            return result;
+    @Autowired
+    private FavoriteMapper favoriteMapper;
+
+    @Autowired
+    private BCryptPasswordEncoder passwordEncoder;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    private static final String AVATAR_UPLOAD_DIR = "uploads/avatars/";
+
+    public ApiResponse<RegisterResponse> register(String username, String password, String email, String nickname) {
+        Long count = userMapper.selectCount(
+                new LambdaQueryWrapper<User>().eq(User::getUsername, username));
+        if (count > 0) {
+            return ApiResponse.fail("用户名已存在");
         }
 
-        if (password == null || password.length() < 6) {
-            result.put("success", false);
-            result.put("message", "密码长度至少6位");
-            return result;
+        count = userMapper.selectCount(
+                new LambdaQueryWrapper<User>().eq(User::getEmail, email));
+        if (count > 0) {
+            return ApiResponse.fail("邮箱已被注册");
         }
 
-        if (email == null || !email.contains("@")) {
-            result.put("success", false);
-            result.put("message", "邮箱格式不正确");
-            return result;
-        }
-
-        // 检查用户名是否存在
-        if (userRepository.existsByUsername(username)) {
-            result.put("success", false);
-            result.put("message", "用户名已存在");
-            return result;
-        }
-
-        // 检查邮箱是否存在
-        if (userRepository.existsByEmail(email)) {
-            result.put("success", false);
-            result.put("message", "邮箱已被注册");
-            return result;
-        }
-
-        // 创建用户
         User user = new User();
         user.setUsername(username);
         user.setPassword(encryptPassword(password));
         user.setEmail(email);
         user.setNickname(nickname != null ? nickname : username);
         user.setIsActive(true);
+        userMapper.insert(user);
 
-        userRepository.save(user);
-
-        result.put("success", true);
-        result.put("message", "注册成功");
-        result.put("userId", user.getId());
-
-        return result;
+        return ApiResponse.ok("注册成功", RegisterResponse.builder()
+                .userId(user.getId())
+                .token(jwtUtil.generateToken(user.getId(), user.getUsername()))
+                .build());
     }
 
-    /**
-     * 用户登录
-     */
-    public Map<String, Object> login(String username, String password) {
-        Map<String, Object> result = new HashMap<>();
-
-        if (username == null || username.trim().isEmpty() || password == null) {
-            result.put("success", false);
-            result.put("message", "用户名或密码为空");
-            return result;
+    public ApiResponse<LoginResponse> login(String username, String password) {
+        User user = userMapper.selectOne(
+                new LambdaQueryWrapper<User>().eq(User::getUsername, username));
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
         }
-
-        Optional<User> userOpt = userRepository.findByUsername(username);
-
-        if (!userOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "用户不存在");
-            return result;
-        }
-
-        User user = userOpt.get();
-
-        // 检查账户是否激活
         if (!user.getIsActive()) {
-            result.put("success", false);
-            result.put("message", "账户已被禁用");
-            return result;
+            return ApiResponse.fail("账户已被禁用");
         }
-
-        // 验证密码
         if (!verifyPassword(password, user.getPassword())) {
-            result.put("success", false);
-            result.put("message", "用户名或密码错误");
-            return result;
+            return ApiResponse.fail("用户名或密码错误");
         }
 
-        // 登录成功
-        result.put("success", true);
-        result.put("message", "登录成功");
-        result.put("userId", user.getId());
-        result.put("id", user.getId());
-        result.put("username", user.getUsername());
-        result.put("nickname", user.getNickname());
-        result.put("email", user.getEmail());
-        result.put("avatar", user.getAvatar());
-        result.put("bio", user.getBio());
-        result.put("defaultDistance", user.getDefaultDistance());
-        result.put("defaultDuration", user.getDefaultDuration());
-        result.put("createdAt", user.getCreatedAt());
+        // 旧 MD5 密码自动升级为 BCrypt
+        if (isLegacyMd5Hash(user.getPassword())) {
+            user.setPassword(encryptPassword(password));
+            userMapper.updateById(user);
+        }
 
-        return result;
+        return ApiResponse.ok("登录成功", LoginResponse.builder()
+                .token(jwtUtil.generateToken(user.getId(), user.getUsername()))
+                .userId(user.getId())
+                .id(user.getId())
+                .username(user.getUsername())
+                .nickname(user.getNickname())
+                .email(user.getEmail())
+                .avatar(user.getAvatar())
+                .bio(user.getBio())
+                .defaultDistance(user.getDefaultDistance())
+                .defaultDuration(user.getDefaultDuration())
+                .createdAt(user.getCreatedAt())
+                .build());
     }
 
-    /**
-     * 加密密码 (MD5)
-     */
-    private String encryptPassword(String password) {
-        return DigestUtils.md5Hex(password + "wildpointer_salt");
+    public ApiResponse<UserInfoResponse> getUserInfo(Integer userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
+        }
+
+        return ApiResponse.ok(UserInfoResponse.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .nickname(user.getNickname())
+                .email(user.getEmail())
+                .avatar(user.getAvatar())
+                .bio(user.getBio())
+                .defaultDistance(user.getDefaultDistance())
+                .defaultDuration(user.getDefaultDuration())
+                .createdAt(user.getCreatedAt())
+                .build());
     }
 
-    /**
-     * 验证密码
-     */
-    private boolean verifyPassword(String rawPassword, String encryptedPassword) {
-        return encryptPassword(rawPassword).equals(encryptedPassword);
+    public ApiResponse<Void> updateProfile(Integer userId, String nickname, String email, String bio) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
+        }
+
+        if (email != null && !email.equals(user.getEmail())) {
+            Long count = userMapper.selectCount(
+                    new LambdaQueryWrapper<User>().eq(User::getEmail, email));
+            if (count > 0) {
+                return ApiResponse.fail("邮箱已被使用");
+            }
+        }
+
+        if (nickname != null && !nickname.trim().isEmpty()) user.setNickname(nickname);
+        if (email != null && !email.trim().isEmpty()) user.setEmail(email);
+        if (bio != null) user.setBio(bio);
+
+        userMapper.updateById(user);
+        return ApiResponse.ok("资料更新成功");
     }
 
-    /**
-     * 获取用户信息
-     */
-    public Map<String, Object> getUserInfo(Long userId) {
-        Map<String, Object> result = new HashMap<>();
-
-        Optional<User> userOpt = userRepository.findById(userId);
-
-        if (!userOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "用户不存在");
-            return result;
+    public ApiResponse<Void> updatePreferences(Integer userId, Integer defaultDistance, Integer defaultDuration) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
         }
 
-        User user = userOpt.get();
-        result.put("success", true);
-        result.put("id", user.getId());
-        result.put("username", user.getUsername());
-        result.put("nickname", user.getNickname());
-        result.put("email", user.getEmail());
-        result.put("avatar", user.getAvatar());
-        result.put("bio", user.getBio());
-        result.put("defaultDistance", user.getDefaultDistance());
-        result.put("defaultDuration", user.getDefaultDuration());
-        result.put("createdAt", user.getCreatedAt());
+        if (defaultDistance != null && defaultDistance > 0) user.setDefaultDistance(defaultDistance);
+        if (defaultDuration != null && defaultDuration > 0) user.setDefaultDuration(defaultDuration);
 
-        return result;
+        userMapper.updateById(user);
+        return ApiResponse.ok("偏好设置更新成功");
     }
 
-    /**
-     * 更新用户资料
-     */
-    public Map<String, Object> updateProfile(Integer userId, String nickname, String email, String bio) {
-        Map<String, Object> result = new HashMap<>();
-
-        Optional<User> userOpt = userRepository.findById((long) userId);
-        if (!userOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "用户不存在");
-            return result;
+    public ApiResponse<Void> changePassword(Integer userId, String currentPassword, String newPassword) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
         }
-
-        User user = userOpt.get();
-
-        // 如果修改邮箱，需要检查是否已存在
-        if (email != null && !email.equals(user.getEmail()) && userRepository.existsByEmail(email)) {
-            result.put("success", false);
-            result.put("message", "邮箱已被使用");
-            return result;
-        }
-
-        if (nickname != null && !nickname.trim().isEmpty()) {
-            user.setNickname(nickname);
-        }
-        if (email != null && !email.trim().isEmpty()) {
-            user.setEmail(email);
-        }
-        if (bio != null) {
-            user.setBio(bio);
-        }
-
-        userRepository.save(user);
-        result.put("success", true);
-        result.put("message", "资料更新成功");
-        return result;
-    }
-
-    /**
-     * 更新偏好设置
-     */
-    public Map<String, Object> updatePreferences(Integer userId, Integer defaultDistance, Integer defaultDuration) {
-        Map<String, Object> result = new HashMap<>();
-
-        Optional<User> userOpt = userRepository.findById((long) userId);
-        if (!userOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "用户不存在");
-            return result;
-        }
-
-        User user = userOpt.get();
-        if (defaultDistance != null && defaultDistance > 0) {
-            user.setDefaultDistance(defaultDistance);
-        }
-        if (defaultDuration != null && defaultDuration > 0) {
-            user.setDefaultDuration(defaultDuration);
-        }
-
-        userRepository.save(user);
-        result.put("success", true);
-        result.put("message", "偏好设置更新成功");
-        return result;
-    }
-
-    /**
-     * 修改密码
-     */
-    public Map<String, Object> changePassword(Integer userId, String currentPassword, String newPassword) {
-        Map<String, Object> result = new HashMap<>();
-
-        Optional<User> userOpt = userRepository.findById((long) userId);
-        if (!userOpt.isPresent()) {
-            result.put("success", false);
-            result.put("message", "用户不存在");
-            return result;
-        }
-
-        User user = userOpt.get();
-
-        // 验证当前密码
         if (!verifyPassword(currentPassword, user.getPassword())) {
-            result.put("success", false);
-            result.put("message", "当前密码错误");
-            return result;
-        }
-
-        // 新密码验证
-        if (newPassword == null || newPassword.length() < 6) {
-            result.put("success", false);
-            result.put("message", "新密码长度至少6位");
-            return result;
+            return ApiResponse.fail("当前密码错误");
         }
 
         user.setPassword(encryptPassword(newPassword));
-        userRepository.save(user);
-        result.put("success", true);
-        result.put("message", "密码修改成功");
-        return result;
+        userMapper.updateById(user);
+        return ApiResponse.ok("密码修改成功");
+    }
+
+    public ApiResponse<UserStatsResponse> getUserStats(Integer userId) {
+        Long routeCount = routeMapper.selectCount(
+                new LambdaQueryWrapper<Route>().eq(Route::getUserId, userId));
+        Long favoriteCount = favoriteMapper.selectCount(
+                new LambdaQueryWrapper<org.andywang.wildpointer.entity.Favorite>()
+                        .eq(org.andywang.wildpointer.entity.Favorite::getUserId, userId));
+
+        // Calculate total distance
+        java.util.List<Route> routes = routeMapper.selectList(
+                new LambdaQueryWrapper<Route>().eq(Route::getUserId, userId));
+        double totalKm = 0;
+        for (Route route : routes) {
+            if (route.getDistance() != null) {
+                try {
+                    String dist = route.getDistance().replaceAll("[^0-9.]", "");
+                    if (!dist.isEmpty()) {
+                        totalKm += Double.parseDouble(dist);
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+
+        return ApiResponse.ok(UserStatsResponse.builder()
+                .totalRoutes(routeCount)
+                .totalFavorites(favoriteCount)
+                .totalDistance(String.format("%.1f km", totalKm))
+                .build());
+    }
+
+    public ApiResponse<String> uploadAvatar(Integer userId, MultipartFile file) {
+        if (file.isEmpty()) {
+            return ApiResponse.fail("请选择文件");
+        }
+
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            return ApiResponse.fail("只能上传图片文件");
+        }
+
+        if (file.getSize() > 5 * 1024 * 1024) {
+            return ApiResponse.fail("图片大小不能超过5MB");
+        }
+
+        String originalFilename = file.getOriginalFilename();
+        String ext = originalFilename != null && originalFilename.contains(".")
+                ? originalFilename.substring(originalFilename.lastIndexOf("."))
+                : ".jpg";
+        String fileName = UUID.randomUUID().toString() + ext;
+
+        File uploadDir = new File(AVATAR_UPLOAD_DIR);
+        if (!uploadDir.exists()) {
+            uploadDir.mkdirs();
+        }
+
+        try {
+            file.transferTo(new File(uploadDir, fileName));
+        } catch (IOException e) {
+            return ApiResponse.fail("文件上传失败");
+        }
+
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return ApiResponse.fail("用户不存在");
+        }
+
+        String avatarUrl = "/uploads/avatars/" + fileName;
+        user.setAvatar(avatarUrl);
+        userMapper.updateById(user);
+
+        return ApiResponse.ok("头像上传成功", avatarUrl);
+    }
+
+    public ApiResponse<Void> resetPassword(String email, String code, String newPassword) {
+        String storedCode = verificationCodes.get(email);
+        if (storedCode == null || !storedCode.equals(code)) {
+            return ApiResponse.fail("验证码错误或已过期");
+        }
+
+        User user = userMapper.selectOne(
+                new LambdaQueryWrapper<User>().eq(User::getEmail, email));
+        if (user == null) {
+            return ApiResponse.fail("该邮箱未注册");
+        }
+
+        user.setPassword(encryptPassword(newPassword));
+        userMapper.updateById(user);
+        verificationCodes.remove(email);
+        return ApiResponse.ok("密码重置成功");
+    }
+
+    // Simple in-memory verification code store
+    private static final java.util.Map<String, String> verificationCodes = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<String, Long> codeExpiry = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public ApiResponse<Void> sendVerificationCode(String email) {
+        User user = userMapper.selectOne(
+                new LambdaQueryWrapper<User>().eq(User::getEmail, email));
+        if (user == null) {
+            return ApiResponse.fail("该邮箱未注册");
+        }
+
+        // Check rate limit (60 seconds)
+        Long lastSent = codeExpiry.get(email + "_last");
+        if (lastSent != null && System.currentTimeMillis() - lastSent < 60000) {
+            return ApiResponse.fail("请60秒后再试");
+        }
+
+        String code = String.format("%06d", new java.util.Random().nextInt(999999));
+        verificationCodes.put(email, code);
+        codeExpiry.put(email + "_last", System.currentTimeMillis());
+        // Code expires in 10 minutes
+        codeExpiry.put(email, System.currentTimeMillis() + 600000);
+
+        // Log the code for development (in production, send via email service)
+        System.out.println("=== 验证码 === Email: " + email + " Code: " + code + " ===");
+
+        return ApiResponse.ok("验证码已发送到邮箱");
+    }
+
+    private String encryptPassword(String password) {
+        return passwordEncoder.encode(password);
+    }
+
+    private boolean verifyPassword(String rawPassword, String storedHash) {
+        if (isLegacyMd5Hash(storedHash)) {
+            return DigestUtils.md5Hex(rawPassword + "wildpointer_salt").equals(storedHash);
+        }
+        return passwordEncoder.matches(rawPassword, storedHash);
+    }
+
+    private boolean isLegacyMd5Hash(String hash) {
+        return hash != null && hash.matches("[a-f0-9]{32}");
     }
 }

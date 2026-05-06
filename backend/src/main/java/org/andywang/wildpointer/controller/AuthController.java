@@ -1,9 +1,14 @@
 package org.andywang.wildpointer.controller;
 
+import org.andywang.wildpointer.common.ApiResponse;
+import org.andywang.wildpointer.dto.*;
+import org.andywang.wildpointer.security.CurrentUserId;
 import org.andywang.wildpointer.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import javax.validation.Valid;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -14,41 +19,22 @@ public class AuthController {
     @Autowired
     private UserService userService;
 
-    /**
-     * 用户注册
-     */
     @PostMapping("/register")
-    public Map<String, Object> register(
-            @RequestParam String username,
-            @RequestParam String password,
-            @RequestParam String email,
-            @RequestParam(required = false) String nickname
-    ) {
-        return userService.register(username, password, email, nickname);
+    public ApiResponse<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
+        return userService.register(request.getUsername(), request.getPassword(),
+                request.getEmail(), request.getNickname());
     }
 
-    /**
-     * 用户登录
-     */
     @PostMapping("/login")
-    public Map<String, Object> login(
-            @RequestParam String username,
-            @RequestParam String password
-    ) {
-        return userService.login(username, password);
+    public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        return userService.login(request.getUsername(), request.getPassword());
     }
 
-    /**
-     * 获取用户信息
-     */
-    @GetMapping("/user/{userId}")
-    public Map<String, Object> getUserInfo(@PathVariable Long userId) {
+    @GetMapping("/user/me")
+    public ApiResponse<UserInfoResponse> getUserInfo(@CurrentUserId Integer userId) {
         return userService.getUserInfo(userId);
     }
 
-    /**
-     * 健康检查
-     */
     @GetMapping("/health")
     public Map<String, String> health() {
         Map<String, String> result = new HashMap<>();
@@ -57,40 +43,42 @@ public class AuthController {
         return result;
     }
 
-    /**
-     * 更新用户资料
-     */
-    @PatchMapping("/profile/{userId}")
-    public Map<String, Object> updateProfile(
-            @PathVariable Integer userId,
-            @RequestParam(required = false) String nickname,
-            @RequestParam(required = false) String email,
-            @RequestParam(required = false) String bio
-    ) {
-        return userService.updateProfile(userId, nickname, email, bio);
+    @PatchMapping("/profile")
+    public ApiResponse<Void> updateProfile(@CurrentUserId Integer userId,
+                                           @Valid @RequestBody UpdateProfileRequest request) {
+        return userService.updateProfile(userId, request.getNickname(), request.getEmail(), request.getBio());
     }
 
-    /**
-     * 更新偏好设置
-     */
-    @PatchMapping("/preferences/{userId}")
-    public Map<String, Object> updatePreferences(
-            @PathVariable Integer userId,
-            @RequestParam(required = false) Integer defaultDistance,
-            @RequestParam(required = false) Integer defaultDuration
-    ) {
-        return userService.updatePreferences(userId, defaultDistance, defaultDuration);
+    @PatchMapping("/preferences")
+    public ApiResponse<Void> updatePreferences(@CurrentUserId Integer userId,
+                                               @Valid @RequestBody UpdatePreferencesRequest request) {
+        return userService.updatePreferences(userId, request.getDefaultDistance(), request.getDefaultDuration());
     }
 
-    /**
-     * 修改密码
-     */
     @PostMapping("/change-password")
-    public Map<String, Object> changePassword(
-            @RequestParam Integer userId,
-            @RequestParam String currentPassword,
-            @RequestParam String newPassword
-    ) {
-        return userService.changePassword(userId, currentPassword, newPassword);
+    public ApiResponse<Void> changePassword(@CurrentUserId Integer userId,
+                                            @Valid @RequestBody ChangePasswordRequest request) {
+        return userService.changePassword(userId, request.getCurrentPassword(), request.getNewPassword());
+    }
+
+    @GetMapping("/stats")
+    public ApiResponse<UserStatsResponse> getUserStats(@CurrentUserId Integer userId) {
+        return userService.getUserStats(userId);
+    }
+
+    @PostMapping("/avatar")
+    public ApiResponse<String> uploadAvatar(@CurrentUserId Integer userId,
+                                            @RequestParam("file") MultipartFile file) {
+        return userService.uploadAvatar(userId, file);
+    }
+
+    @PostMapping("/forgot-password")
+    public ApiResponse<Void> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        return userService.sendVerificationCode(request.getEmail());
+    }
+
+    @PostMapping("/reset-password")
+    public ApiResponse<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        return userService.resetPassword(request.getEmail(), request.getCode(), request.getNewPassword());
     }
 }

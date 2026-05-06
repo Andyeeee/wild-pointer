@@ -1,56 +1,52 @@
 package org.andywang.wildpointer.entity;
 
+import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.persistence.*;
 import java.time.LocalDateTime;
 
-@Entity
-@Table(name = "routes")
+@TableName("routes")
 @Data
 @NoArgsConstructor
 public class Route {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Integer id;
 
-    @Column(name = "user_id", nullable = false)
+    @TableField("user_id")
     private Integer userId;
 
-    @Column(nullable = false, length = 200)
-    private String name; // 路线名称
+    private String name;
 
-    @Column(length = 200)
-    private String startLocation; // 起点
+    @TableField("start_location")
+    private String startLocation;
 
-    @Column(length = 200)
-    private String endLocation; // 终点
+    @TableField("end_location")
+    private String endLocation;
 
-    @Column(length = 50)
-    private String distance; // 距离
+    @TableField("start_lat")
+    private Double startLat;
 
-    @Column(length = 50)
-    private String duration; // 耗时
+    @TableField("start_lon")
+    private Double startLon;
 
-    @Column(length = 50)
-    private String routeType; // RANDOM 或 DESTINATION
+    @TableField("end_lat")
+    private Double endLat;
 
-    @Column(name = "created_at", nullable = false, updatable = false, columnDefinition = "DATETIME DEFAULT CURRENT_TIMESTAMP")
+    @TableField("end_lon")
+    private Double endLon;
+
+    private String distance;
+
+    private String duration;
+
+    @TableField("route_type")
+    private String routeType;
+
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at", columnDefinition = "DATETIME DEFAULT CURRENT_TIMESTAMP")
+    @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
 }
